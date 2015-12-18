@@ -53,7 +53,6 @@ static struct yuuu_ipfrags_node *yuuu_ipfrags_alloc(struct yuuu_ipfrags *ipfrags
 		return NULL;
 
 	ipfrags->constructor(item, keys);
-	pthread_mutex_init(&item->lock, NULL);
 }
 
 static struct yuuu_ipfrags_node *yuuu_ipfrags_intern(struct yuuu_ipfrags *ipfrags, 
@@ -78,7 +77,7 @@ static struct yuuu_ipfrags_node *yuuu_ipfrags_intern(struct yuuu_ipfrags *ipfrag
 	tmp = node;
 	hlist_add_head(&tmp->list, &ipfrags->hash[h]);
 	list_add_tail(&tmp->lru_list, &ipfrags->lru_list);
-	pthread_rwlock_unlock(&ipfrags->lock);	
+	pthread_rwlock_unlock(&ipfrags->lock);
 
 	return tmp;
 }
@@ -114,24 +113,36 @@ static struct yuuu_ipfrags_node *__yuuu_ipfrag_find(struct yuuu_ipfrags *ipfrags
 	return yuuu_ipfrags_add(ipfrags, keys);
 }
 
-static int yuuu_ipfrag_find(struct yuuu_ipfrags *ipfrags, struct yuuu_ipv4_hdr *iphdr)
+static struct yuuu_ipv4_hdr * yuuu_ipfrag_find(struct yuuu_ipfrags *ipfrags, struct yuuu_ipv4_hdr *iphdr)
 {
 	__u32 hash;
 	struct yuuu_ipfrags_keys keys;
 	struct yuuu_ipfrags_node *res;
+	struct yuuu_ipfrags_dnode *des;
 
 	keys.iphdr = iphdr;
-
-	pthread_rwlock_rdlock(&ipfrags->lock);
 	hash = yuuu_ipfrag_hashfn(iphdr->id, iphdr->saddr, iphdr->daddr, iphdr->protocol);
 
+	pthread_rwlock_rdlock(&ipfrags->lock);
 	res = __yuuu_ipfrag_find(ipfrags, hash, &keys);
-	;
+	if(res)
+	{
+		des = container_of(res, struct yuuu_ipfrags_dnode, node);
+		if(des)
+		{
+		
+		}
+	}
+
+	return NULL;
 }
 
 static int yuuu_ipfrag_reassembley(struct yuuu_ipfrags *ipfrags, struct yuuu_ipv4_hdr *iphdr)
 {
-	yuuu_ipfrag_find(ipfrags, iphdr);
+	struct yuuu_ipv4_hdr * new = yuuu_ipfrag_find(ipfrags, iphdr);
+	if(!new)
+		return -1;
+	/*reassembley success and handle new point*/
 	return 0;
 }
 
@@ -156,6 +167,10 @@ static void yuuu_ipv4_frag_init(struct yuuu_ipfrags_node *node, void *keys)
 	des->id		= arg->iphdr->id;
 	des->saddr	= arg->iphdr->saddr;
 	des->daddr	= arg->iphdr->daddr;
+
+	pthread_mutex_init(&node->lock, NULL);
+	INIT_LIST_HEAD(&node->lru_list);
+	INIT_HLIST_NODE(&node->list);
 }
 
 static __u32 yuuu_ipv4_frag_hashfn(struct yuuu_ipfrags_node *node)
@@ -168,6 +183,17 @@ static __u32 yuuu_ipv4_frag_hashfn(struct yuuu_ipfrags_node *node)
 
 static int yuuu_ipfrag_init()
 {
+	int i;
+	/*init hlist hash*/
+	for(i = 0; i < YUUU_FRAGS_HASH_SIZE; i++)
+	{
+		INIT_HLIST_HEAD(&yuuu_ipfrags.hash[i]);	
+	}
+	/*init pthread mutex*/
+	pthread_rwlock_init(&yuuu_ipfrags.lock, NULL);
+	/*init lru list*/
+	INIT_LIST_HEAD(&yuuu_ipfrags.lru_list);
+
 	yuuu_ipfrags.qsize		= sizeof(struct yuuu_ipfrags_dnode);
 	yuuu_ipfrags.constructor	= yuuu_ipv4_frag_init;
 	yuuu_ipfrags.match		= yuuu_ipv4_frag_match;
